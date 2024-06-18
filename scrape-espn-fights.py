@@ -6,6 +6,7 @@ import argparse
 import logging
 import random
 from selenium import webdriver
+from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 
@@ -53,9 +54,8 @@ def get_driver(driver_path):
 	options.add_argument('--headless')
 	options.add_argument('--disable-gpu')	# only for Windows
 	options.add_argument('--start-maximized')
-	#driver = webdriver.Chrome(driver_path, options=options) 
-	service = Service(executable_path=driver_path) 
-	driver = webdriver.Chrome(service=service)
+	service = Service(executable_path=driver_path)
+	driver = webdriver.Chrome(service=service,options=options)
 	driver.set_window_size("1980","1080")
 	driver.set_page_load_timeout(60)
 	driver.implicitly_wait(15)
@@ -68,11 +68,18 @@ def main(logger,driver_path,out_csv,urls):
 			rows = [] # Write to CSV after processing a web page.
 			time.sleep(random.uniform(0.5,2))
 			driver.get(url)
+			# Accept cookies, if popup
+			try:
+				popup_cookies = driver.find_element(By.ID, value="onetrust-accept-btn-handler")
+				popup_cookies.click()
+				time.sleep(random.uniform(1.5, 3))
+			except: #no popup
+				pass
 			event_url = url
 			event_id = event_url.split("/")[-1]
 			try:
 				# 502 error
-				headline = driver.find_element_by_xpath("//h1[contains(@class,'headline')]")	
+				headline = driver.find_element(by=By.XPATH, value="//h1[contains(@class,'headline')]")
 			except:
 				if "502 bad gateway" in driver.page_source.lower():
 					logger.error("502 HTTP Error. Will retry later...")
@@ -82,12 +89,12 @@ def main(logger,driver_path,out_csv,urls):
 				else:
 					raise
 			event_name = headline.text
-			event_date = headline.find_element_by_xpath("./following-sibling::div[1]").text
+			event_date = headline.find_element(by=By.XPATH, value="./following-sibling::div[1]").text
 			event_date_month = event_date.split()[0]
 			event_date_day = event_date.split()[1].replace(",","")
 			event_date_year = event_date.split()[-1]
 			try:
-				event_location = headline.find_element_by_xpath("./following-sibling::div[2]").text
+				event_location = headline.find_element(by=By.XPATH, value="./following-sibling::div[2]").text
 				location_parts = event_location.split(",")
 				event_location_arena = location_parts[0]
 				event_location_geo = location_parts[-1] if len(location_parts) > 1 else ""
@@ -95,30 +102,30 @@ def main(logger,driver_path,out_csv,urls):
 				event_location, event_location_arena, event_location_geo = "","",""
 			skip_this_page = False			
 			# Rows are grouped by fight priority.
-			groups = driver.find_elements_by_xpath("//div[@class='PageLayout__Main']/div[@data-wrapping='MMAFightCard']")
+			groups = driver.find_elements(by=By.XPATH, value="//div[@class='PageLayout__Main']/div[@data-wrapping='MMAFightCard']")
 			for group in groups:
 				if skip_this_page:
 					break
-				fight_priority = group.find_element_by_xpath(".//header/div/h3").text.split('-')[0].strip()
-				fights = group.find_elements_by_xpath(".//div[@class='Accordion']/div[contains(@class,'AccordionPanel')]")
+				fight_priority = group.find_element(by=By.XPATH, value=".//header/div/h3").text.split('-')[0].strip()
+				fights = group.find_elements(by=By.XPATH,value=".//div[@class='Accordion']/div[contains(@class,'AccordionPanel')]")
 				for fight in fights:
-					accordion_header = fight.find_element_by_xpath("./div[contains(@class,'AccordionPanel__header')]")	
-					if not accordion_header.find_elements_by_xpath(".//div[contains(@class,'MMAFightCard__Gamestrip--open')]"):
+					accordion_header = fight.find_element(by=By.XPATH, value="./div[contains(@class,'AccordionPanel__header')]")
+					if not accordion_header.find_elements(by=By.XPATH,value=".//div[contains(@class,'MMAFightCard__Gamestrip--open')]"):
 						accordion_header.click()
 					time.sleep(0.5)
-					overview_header = accordion_header.find_element_by_xpath(".//div[contains(@class,'Gamestrip__Overview')]")
+					overview_header = accordion_header.find_element(by=By.XPATH, value=".//div[contains(@class,'Gamestrip__Overview')]")
 					if "Canceled" in overview_header.text:
 						logger.info("Canceled: {}\nSkipping...".format(driver.current_url))
 						continue
 					try:					
-						fight_classes = accordion_header.find_element_by_xpath(".//div[@class='Collapse__Child']/h2").text.split("-")
+						fight_classes = accordion_header.find_element(by=By.XPATH, value=".//div[@class='Collapse__Child']/h2").text.split("-")
 						fight_class1 = fight_classes[0]	
 						fight_class2 = fight_classes[1] if len(fight_classes)>1 else ""
 						fight_class3 = fight_classes[2] if len(fight_classes)>2 else ""
 					except:
 						fight_class1,fight_class2,fight_class3 = "","",""
 					try:
-						info_divs = overview_header.find_elements_by_xpath(".//div[contains(@class,'ScoreCell__Time')]/div/div")
+						info_divs = overview_header.find_elements(by=By.XPATH,value=".//div[contains(@class,'ScoreCell__Time')]/div/div")
 						fight_end_method1 = info_divs[0].text
 						fight_end_time1,fight_end_time2 = info_divs[-1].text.split(",")
 					except IndexError:	
@@ -137,29 +144,31 @@ def main(logger,driver_path,out_csv,urls):
 							fight_end_time1,fight_end_time2 = "",""
 						else:
 							fight_end_method2 = ""
-					f1_header = accordion_header.find_element_by_xpath(".//div[contains(@class,'MMACompetitor')][1]")
-					f1_name = f1_header.find_element_by_xpath(".//h2/span").text
-					f2_header = accordion_header.find_element_by_xpath(".//div[contains(@class,'MMACompetitor')][2]")
-					f2_name = f2_header.find_element_by_xpath(".//h2/span").text
-					if f1_header.find_elements_by_class_name('MMACompetitor__arrow'):
-						fight_winner = f1_name
-					else:
+					f1_header = accordion_header.find_element(by=By.XPATH, value=".//div[contains(@class,'MMACompetitor')][1]")
+					f1_name = f1_header.find_element(by=By.XPATH, value=".//h2/span").text
+					f2_header = accordion_header.find_element(by=By.XPATH, value=".//div[contains(@class,'MMACompetitor')][2]")
+					f2_name = f2_header.find_element(by=By.XPATH, value=".//h2/span").text
+					try:
+						f1_header.find_element(by=By.CLASS_NAME, value='MMACompetitor__arrow')
+					except:
 						fight_winner = f2_name
-					accordion_body = fight.find_element_by_xpath("./div[contains(@class,'AccordionPanel__body')]")
-					accordion_body_divs = accordion_body.find_elements_by_xpath(".//div[@class='ResponsiveWrapper']/div/div[contains(@class, 'flex')]/div")
-					f1_url = accordion_body_divs[0].find_element_by_xpath(".//a[contains(@class,'AnchorLink')]").get_attribute("href")
+					else:
+						fight_winner = f1_name
+					accordion_body = fight.find_element(by=By.XPATH, value="./div[contains(@class,'AccordionPanel__body')]")
+					accordion_body_divs = accordion_body.find_elements(by=By.XPATH,value=".//div[@class='ResponsiveWrapper']/div/div[contains(@class, 'flex')]/div")
+					f1_url = accordion_body_divs[0].find_element(by=By.XPATH, value=".//a[contains(@class,'AnchorLink')]").get_attribute("href")
 					f1_id = f1_url.split("/")[-2]
-					f2_url = accordion_body_divs[2].find_element_by_xpath(".//a[contains(@class,'AnchorLink')]").get_attribute("href")
+					f2_url = accordion_body_divs[2].find_element(by=By.XPATH, value=".//a[contains(@class,'AnchorLink')]").get_attribute("href")
 					f2_id = f2_url.split("/")[-2]
 					logger.debug("Fighter 1 URL: {}, ID: {}\nFighter 2 URL: {}, ID: {}".format(f1_url,f1_id,f2_url,f2_id))
 					# All stats
-					matchup_list = accordion_body_divs[1].find_elements_by_xpath(".//ul[@class='MMAMatchup list']/li")
+					matchup_list = accordion_body_divs[1].find_elements(by=By.XPATH,value=".//ul[@class='MMAMatchup list']/li")
 					fstats = {"KD":[],"TOT STRIKES":[],"SIG STRIKES":[],
 									"HEAD":[],"BODY":[],"LEGS":[],
 									"CONTROL":[],"TAKE DOWNS":[],"SUB ATT":[]}	
 					for li in matchup_list:
-						key = li.find_element_by_xpath("./div[2]").text.strip().upper()
-						vals = li.find_elements_by_xpath(".//div[contains(@class,'MMAMatchup__Stat')]")
+						key = li.find_element(by=By.XPATH, value="./div[2]").text.strip().upper()
+						vals = li.find_elements(by=By.XPATH, value=".//div[contains(@class,'MMAMatchup__Stat')]")
 						if "/" in vals[0].text:
 							res=[]
 							for v in vals:
@@ -215,7 +224,7 @@ if __name__ == '__main__':
 	args = parser.parse_args()
 	logger = logging.getLogger('scrape-espn-fights')
 	logger.setLevel(logging.INFO)
-	logfile = args.logfile or 'scrape-espn-fights.log'
+	logfile = args.logfile or 'out.log'
 	fh = logging.FileHandler(logfile)
 	fh.setLevel(logging.ERROR)
 	ch = logging.StreamHandler()
